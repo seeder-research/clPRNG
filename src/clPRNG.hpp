@@ -115,7 +115,9 @@ extern "C" {
 #endif
 CLPRNG_DLL void initialize_prng(ClPRNG* p, cl_device_id dev_id, const char *name);
 
-CLPRNG_DLL ClPRNG* create_clPRNG_stream();
+CLPRNG_DLL ClPRNG* clPRNG_create_stream();
+
+CLPRNG_DLL cl_int clPRNG_generate_stream(ClPRNG* p, int count, cl_mem dst);
 
 CLPRNG_DLL const char * get_precision(ClPRNG* p) {
     return (*p).GetPrecision().c_str();

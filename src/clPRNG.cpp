@@ -2,8 +2,46 @@
 
 // Main C interface functions
 
-CLPRNG_DLL ClPRNG* create_clPRNG_stream() {
+CLPRNG_DLL ClPRNG* clPRNG_create_stream() {
     return new ClPRNG;
+}
+
+CLPRNG_DLL cl_int clPRNG_generate_stream(ClPRNG* p, int count, cl_mem dst) {
+    if (count < 0) {
+        std::cout << "ERROR: count must be a positive integer!" << std::endl;
+        return -1;
+    }
+    for (; count > 0;) {
+        if ((count == 0) || (dst == NULL)) {
+            break;
+        }
+        if (p->count <= 0) {
+            cl_int err = p.GenerateRNG();
+            if (err != 0) {
+                std::cout << "ERROR: unable to generate random bit stream!" << std::endl;
+                return err;
+            }
+            p->count = p->bufSize;
+            p->bufOffset = 0;
+        }
+        cl_uint dst_offset = 0;
+        if (count <= p.count) {
+            cl_int err = copyBuf(p.buffer, p.bufOffset, dst, dst_offset, count);
+            if (err != 0) {
+                std::cout << "ERROR: unable to copy random bit stream from buffer to dst!" << std::endl;
+                return err;
+            }
+            p.count -= count;
+            p.bufOffset += count;
+            break;
+        } else {
+            cl_int err = copyBuf(p.buffer, p.bufOffset, dst, dst_offset, p.count);
+            count -= p.count;
+            dst_offset += p.count;
+            p.count = 0;
+        }
+    }
+    return 0;
 }
 
 CLPRNG_DLL void initialize_prng(ClPRNG* p, cl_device_id dev_id, const char *name) {
