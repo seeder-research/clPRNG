@@ -66,7 +66,8 @@ CLPRNG_DLL class ClPRNG {
         cl::Buffer        stateBuffer;
         cl::Buffer        tmpOutputBuffer;
         size_t            state_size;
-        size_t            valid_cnt;
+        size_t            total_count;
+        size_t            valid_count;
         size_t            offset;
 
         cl_uint           wkgrp_size;
@@ -87,23 +88,40 @@ CLPRNG_DLL class ClPRNG {
         cl_int PrivateGenerateStream(); // To implement
 
     public:
+        ClPRNG();
+        ~ClPRNG();
+
         void Init(cl_device_id dev_id, const char * name);
+
         void BuildSource();
+        std::string GetSource() { return rng_source; }
+
         cl_int BuildKernelProgram();
         cl_int ReadyGenerator(); // To complete
         cl_int SeedGenerator(); // To implement
         cl_int GenerateStream(); // To implement
-        void Seed(uint32_t seed);
-        void GenerateStream(cl_mem OutputBuffer);
-        bool IsSourceReady() { return source_ready; }
-        bool IsInitialized() { return init_flag; }
+
+        size_t GetNumBufferEntries() { return total_count; }
+        void SetNumBufferEntries(size_t num) { total_count = num; }
+
+        size_t GetNumValidEntries() { return valid_count; }
+        void SetNumValidEntries(size_t num) { valid_count = num; }
+
+        void SetBufferOffset(size_t ptr);
+        size_t GetBufferOffset();
+
         std::string GetPrecision() { return std::string(rng_precision); }
         int SetPrecision(const char * precision);
+
         std::string GetName() { return std::string(rng_name); }
         void SetName(const char * name) { rng_name = name; }
-        std::string GetSource() { return rng_source; }
-        ClPRNG();
-        ~ClPRNG();
+
+        void SetSeed(ulong seed) { seedVal = seed; }
+
+        bool IsSourceReady() { return source_ready; }
+        bool IsInitialized() { return init_flag; }
+
+	cl_int CopyBufferEntries(cl_mem dst, size_t dst_offset, size_t count);
 };
 
 // Internal functions

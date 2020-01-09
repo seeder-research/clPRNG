@@ -15,30 +15,30 @@ CLPRNG_DLL cl_int clPRNG_generate_stream(ClPRNG* p, int count, cl_mem dst) {
         if ((count == 0) || (dst == NULL)) {
             break;
         }
-        if (p->count <= 0) {
-            cl_int err = p.GenerateRNG();
+        if (p->GetNumValidEntries() <= 0) {
+            cl_int err = p->GenerateStream();
             if (err != 0) {
                 std::cout << "ERROR: unable to generate random bit stream!" << std::endl;
                 return err;
             }
-            p->count = p->bufSize;
-            p->bufOffset = 0;
+            p->SetNumValidEntries(p->GetNumBufferEntries());
+            p->SetBufferOffset(0);
         }
-        cl_uint dst_offset = 0;
-        if (count <= p.count) {
-            cl_int err = copyBuf(p.buffer, p.bufOffset, dst, dst_offset, count);
+        size_t dst_offset = 0;
+        if (count <= p->GetNumValidEntries()) {
+	    cl_int err = p->CopyBufferEntries(dst, dst_offset, (size_t)(count));
             if (err != 0) {
                 std::cout << "ERROR: unable to copy random bit stream from buffer to dst!" << std::endl;
                 return err;
             }
-            p.count -= count;
-            p.bufOffset += count;
+            p->SetNumValidEntries(p->GetNumValidEntries() - count);
+            p->SetBufferOffset(count + p->GetBufferOffset());
             break;
         } else {
-            cl_int err = copyBuf(p.buffer, p.bufOffset, dst, dst_offset, p.count);
-            count -= p.count;
-            dst_offset += p.count;
-            p.count = 0;
+	    cl_int err = p->CopyBufferEntries(dst, dst_offset, p->GetNumValidEntries());
+            count -= p->GetNumValidEntries();
+            dst_offset += p->GetNumValidEntries();
+            p->SetNumValidEntries(0);
         }
     }
     return 0;
@@ -58,7 +58,8 @@ ClPRNG::ClPRNG() {
     device = 0;
     context = 0;
     com_queue = 0;
-    valid_cnt = 0;
+    total_count = 0;
+    valid_count = 0;
     seedVal = 0;
     offset = 0;
     wkgrp_size = 0;
@@ -415,3 +416,34 @@ void ClPRNG::SetStateSize() {
             break;
     }
 }
+
+void ClPRNG::SetBufferOffset(size_t ptr) {
+    if ((std::string)(rng_precision) == "double") {
+        offset = ptr * 8;
+    } else {
+        offset = ptr * 4;
+    }
+}
+
+size_t ClPRNG::GetBufferOffset() {
+    if ((std::string)(rng_precision) == "double") {
+        return (offset / 8);
+    }
+    return (offset / 4);
+}
+
+// TODO:
+cl_int ClPRNG::CopyBufferEntries(cl_mem dst, size_t dst_offset, size_t count) {
+    return 0;
+}
+
+// TODO:
+cl_int ClPRNG::SeedGenerator() {
+    return 0;
+}
+
+// TODO:
+cl_int ClPRNG::GenerateStream() {
+    return 0;
+}
+
