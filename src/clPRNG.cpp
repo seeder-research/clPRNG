@@ -434,7 +434,34 @@ size_t ClPRNG::GetBufferOffset() {
 
 // TODO:
 cl_int ClPRNG::CopyBufferEntries(cl_mem dst, size_t dst_offset, size_t count) {
-    return 0;
+    cl::Buffer tmp; // Create a temporary buffer object
+    cl_int err = clRetainMemObject(dst); // Increment reference count
+    if (err != 0) {
+        std::cout << "ERROR: unable to increase reference count of dst in CopyBufferEntries!" << std::endl;
+        return err;
+    }
+    tmp = dst; // Make tmp a buffer whose underlying MemObject is dst
+    size_t numBytes = 4;
+    if ((std::string)(rng_precision) == "double") {
+        numBytes = 8;
+    }
+
+    // Copy buffer data in device
+    cl::Event eventFlag;
+    err = com_queue.enqueueCopyBuffer(tmpOutputBuffer, tmp, offset * numBytes, dst_offset * numBytes, count * numBytes, NULL, &eventFlag);
+    if (err != 0) {
+        std::cout << "ERROR: unable to copy buffer entries in CopyBufferEntries!" << std::endl;
+        return err;
+    }
+
+    // Wait for copy in device side to complete before returning
+    std::vector<cl::Event> eventList = { eventFlag };
+    err = cl::Event::waitForEvents(eventList);
+    if (err != 0) {
+        std::cout << "ERROR: unable to wait for copy buffer to complete in CopyBufferEntries!" << std::endl;
+        return err;
+    }
+    return err;
 }
 
 // TODO:
