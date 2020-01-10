@@ -55,40 +55,41 @@
 // Prototype class
 CLPRNG_DLL class ClPRNG {
     private:
-        cl::Device        device;
-        cl_device_id      device_id;
+        cl::Device        device;              // OpenCL C++ API
+        cl_device_id      device_id;           // OpenCL C API (to support buffer copy)
 
-        cl::Context       context;
-        cl_context       context_id;
+        cl::Context       context;             // OpenCL C++ API
+        cl_context       context_id;           // OpenCL C API (to support buffer copy)
 
-        cl::CommandQueue  com_queue;
-        cl_command_queue  com_queue_id;
+        cl::CommandQueue  com_queue;           // OpenCL C++ API
+        cl_command_queue  com_queue_id;        // OpenCL C API (to support buffer copy)
 
-        cl::Program       rng_program;
-        cl::Kernel        seed_rng;
-        cl::Kernel        generate_bitstream;
+        cl::Program       rng_program;         // OpenCL C++ API
+        cl::Kernel        seed_rng;            // OpenCL C++ API
+        cl::Kernel        generate_bitstream;  // OpenCL C++ API
 
-        cl::Buffer        stateBuffer;
-        cl_mem            stateBuffer_id;
+        cl::Buffer        stateBuffer;         // OpenCL C++ API
+        cl_mem            stateBuffer_id;      // OpenCL C API (to support buffer copy)
 
-        cl::Buffer        tmpOutputBuffer;
-        cl_mem            tmpOutputBuffer_id;
+        cl::Buffer        tmpOutputBuffer;     // OpenCL C++ API
+        cl_mem            tmpOutputBuffer_id;  // OpenCL C API (to support buffer copy)
 
-        size_t            state_size;
-        size_t            total_count;
-        size_t            valid_count;
-        size_t            offset;
+        size_t            state_size;          // Information for PRNG state
 
-        cl_uint           wkgrp_size;
-        cl_uint           wkgrp_count;
+        size_t            total_count;         // Information for temporary output buffer
+        size_t            valid_count;         // Information for temporary output buffer
+        size_t            offset;              // Information for temporary output buffer
 
-        const char*       rng_name;
-        const char*       rng_precision;
-        std::string       rng_source;
-        ulong             seedVal;
+        cl_uint           wkgrp_size;          // For kernel launch configuration
+        cl_uint           wkgrp_count;         // For kernel launch configuration
 
-        bool              source_ready;
-        bool              init_flag;
+        const char*       rng_name;            // Name of PRNG
+        const char*       rng_precision;       // Precision of PRNG
+        std::string       rng_source;          // Kernel source code of PRNG
+        ulong             seedVal;             // Seed value used to seed the PRNG
+
+        bool              source_ready;        // Flag for whether kernel source is built
+        bool              init_flag;           // Flag for whether stream object has been initialized
 
         int LookupPRNG(std::string name);
         void generateBufferKernel(std::string name, std::string type, std::string src);
