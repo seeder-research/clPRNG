@@ -75,18 +75,21 @@ ClPRNG::~ClPRNG() {
 }
 
 void ClPRNG::Init(cl_device_id dev_id, const char *name) {
-    device = cl::Device(dev_id);
+    device_id = dev_id;
+    device = device_id;
     cl_int err;
-    context = cl::Context(device, NULL, NULL, NULL, &err);
+    context_id = clCreateContext(NULL, 1, &device_id, NULL, NULL, &err);
     if (err) {
         std::cout << "ERROR: Unable to create context!" << std::endl;
         return;
     }
-    com_queue = cl::CommandQueue(context, device, 0, &err);
+    context = context_id;
+    com_queue_id = clCreateCommandQueue(context_id, device_id, NULL, &err);
     if (err) {
         std::cout << "ERROR: Unable to create command queue!" << std::endl;
         return;
     }
+    com_queue = cl::CommandQueue(context, device, 0, &err);
     rng_name = name;
     std::string prng_name = std::string(rng_name);
     rng_precision = "uint";

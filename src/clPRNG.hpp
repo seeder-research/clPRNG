@@ -56,8 +56,13 @@
 CLPRNG_DLL class ClPRNG {
     private:
         cl::Device        device;
+        cl_device_id      device_id;
+
         cl::Context       context;
+        cl_context       context_id;
+
         cl::CommandQueue  com_queue;
+        cl_command_queue  com_queue_id;
 
         cl::Program       rng_program;
         cl::Kernel        seed_rng;
