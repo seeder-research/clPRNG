@@ -69,7 +69,11 @@ CLPRNG_DLL class ClPRNG {
         cl::Kernel        generate_bitstream;
 
         cl::Buffer        stateBuffer;
+        cl_mem            stateBuffer_id;
+
         cl::Buffer        tmpOutputBuffer;
+        cl_mem            tmpOutputBuffer_id;
+
         size_t            state_size;
         size_t            total_count;
         size_t            valid_count;
