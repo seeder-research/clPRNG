@@ -59,7 +59,7 @@ CLPRNG_DLL class ClPRNG {
         cl_device_id      device_id;           // OpenCL C API (to support buffer copy)
 
         cl::Context       context;             // OpenCL C++ API
-        cl_context       context_id;           // OpenCL C API (to support buffer copy)
+        cl_context        context_id;          // OpenCL C API (to support buffer copy)
 
         cl::CommandQueue  com_queue;           // OpenCL C++ API
         cl_command_queue  com_queue_id;        // OpenCL C API (to support buffer copy)
@@ -75,6 +75,7 @@ CLPRNG_DLL class ClPRNG {
         cl_mem            tmpOutputBuffer_id;  // OpenCL C API (to support buffer copy)
 
         size_t            state_size;          // Information for PRNG state
+        void *            local_state_mem;     // Host side storage of PRNG state
 
         size_t            total_count;         // Information for temporary output buffer
         size_t            valid_count;         // Information for temporary output buffer
@@ -88,8 +89,9 @@ CLPRNG_DLL class ClPRNG {
         std::string       rng_source;          // Kernel source code of PRNG
         ulong             seedVal;             // Seed value used to seed the PRNG
 
-        bool              source_ready;        // Flag for whether kernel source is built
         bool              init_flag;           // Flag for whether stream object has been initialized
+        bool              source_ready;        // Flag for whether kernel source is built
+        bool              program_ready;       // Flag for whether kernel program is compiled
 
         int LookupPRNG(std::string name);
         void generateBufferKernel(std::string name, std::string type, std::string src);
@@ -128,8 +130,9 @@ CLPRNG_DLL class ClPRNG {
 
         void SetSeed(ulong seed) { seedVal = seed; }
 
-        bool IsSourceReady() { return source_ready; }
         bool IsInitialized() { return init_flag; }
+        bool IsSourceReady() { return source_ready; }
+        bool IsProgramReady() { return program_ready; }
 
 	cl_int CopyBufferEntries(cl_mem dst, size_t dst_offset, size_t count);
 };
