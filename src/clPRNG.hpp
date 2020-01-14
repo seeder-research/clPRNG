@@ -94,6 +94,7 @@ CLPRNG_DLL class ClPRNG {
         bool              init_flag;           // Flag for whether stream object has been initialized
         bool              source_ready;        // Flag for whether kernel source is built
         bool              program_ready;       // Flag for whether kernel program is compiled
+        bool              generator_ready;     // Flag for whether the stream object has been completely set up
         bool              seeded;              // Flag for whether PRNG has been seeded
         bool              buffers_ready;       // Flag for whether the temporary output buffers are ready
 
@@ -141,40 +142,47 @@ CLPRNG_DLL class ClPRNG {
         bool IsInitialized() { return this->init_flag; }
         bool IsSourceReady() { return this->source_ready; }
         bool IsProgramReady() { return this->program_ready; }
+        bool IsGeneratorReady() { return this->generator_ready; }
         bool IsSeeded() { return this->seeded; }
 
 	cl_int CopyBufferEntries(cl_mem dst, size_t dst_offset, size_t count);
 };
 
-// Internal functions
-cl_int buildPRNGKernelProgram(ClPRNG* p);
-
 // External functions
 #ifdef __cplusplus
 extern "C" {
 #endif
-CLPRNG_DLL void initialize_prng(ClPRNG* p, cl_device_id dev_id, const char *name);
-
 CLPRNG_DLL ClPRNG* clPRNG_create_stream();
 
-CLPRNG_DLL cl_int clPRNG_generate_stream(ClPRNG* p, int count, cl_mem dst);
+CLPRNG_DLL cl_int clPRNG_initialize_prng(ClPRNG* p, cl_device_id dev_id, const char *name);
 
-CLPRNG_DLL const char * get_precision(ClPRNG* p) {
+CLPRNG_DLL const char * clPRNG_get_prng_precision(ClPRNG* p) {
     return (*p).GetPrecision().c_str();
 }
 
-CLPRNG_DLL int set_precision(ClPRNG* p, const char* precision) {
+CLPRNG_DLL int clPRNG_set_prng_precision(ClPRNG* p, const char* precision) {
     return (*p).SetPrecision(precision);
 }
 
-CLPRNG_DLL const char * get_name(ClPRNG* p) {
+CLPRNG_DLL const char * clPRNG_get_prng_name(ClPRNG* p) {
     return (*p).GetName().c_str();
 }
 
-CLPRNG_DLL cl_int set_name(ClPRNG* p, const char* name) {
+CLPRNG_DLL cl_int clPRNG_set_prng_name(ClPRNG* p, const char* name) {
     (*p).SetName(name);
-    return buildPRNGKernelProgram(p);
+    (*p).BuildSource();
+    return (*p).BuildKernelProgram();
 }
+
+CLPRNG_DLL void clPRNG_set_prng_seed(ClPRNG* p, ulong seedNum) {
+    (*p).SetSeed(seedNum);
+}
+
+CLPRNG_DLL cl_int clPRNG_ready_stream(ClPRNG* p) {
+    return (*p).ReadyGenerator();
+}
+
+CLPRNG_DLL cl_int clPRNG_generate_stream(ClPRNG* p, int count, cl_mem dst);
 
 #ifdef __cplusplus
 }

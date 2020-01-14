@@ -85,12 +85,8 @@ CLPRNG_DLL cl_int clPRNG_generate_stream(ClPRNG* p, int count, cl_mem dst) {
 }
 
 // Main call to initialize the stream object
-CLPRNG_DLL void initialize_prng(ClPRNG* p, cl_device_id dev_id, const char *name) {
+CLPRNG_DLL cl_int clPRNG_initialize_prng(ClPRNG* p, cl_device_id dev_id, const char *name) {
     (*p).Init(dev_id, name);
-}
-
-// Main call to generate the kernel program in the stream project
-CLPRNG_DLL cl_int buildPRNGKernelProgram(ClPRNG* p) {
     (*p).BuildSource();
     return (*p).BuildKernelProgram();
 }
@@ -102,7 +98,7 @@ ClPRNG::ClPRNG() {
     com_queue = 0;
     total_count = 0;
     valid_count = 0;
-    seedVal = 0;
+    seedVal = (ulong)(time(NULL));
     offset = 0;
     local_state_mem = NULL;
     wkgrp_size = 0;
@@ -140,6 +136,8 @@ void ClPRNG::Init(cl_device_id dev_id, const char *name) {
     this->init_flag = true;
     this->source_ready = false;
     this->program_ready = false;
+    this->generator_ready = false;
+    this->seeded = false;
 }
 
 // Internal function to set the precision of the random
@@ -147,6 +145,8 @@ void ClPRNG::Init(cl_device_id dev_id, const char *name) {
 int ClPRNG::SetPrecision(const char * precision) {
     this->source_ready = false;
     this->program_ready = false;
+    this->generator_ready = false;
+    this->seeded = false;
     std::string str = std::string(precision);
     if ((str == "uint") || (str == "ulong") || (str == "float") || (str == "double")) {
         this->rng_precision = precision;
@@ -209,6 +209,9 @@ int ClPRNG::LookupPRNG(std::string name) {
 
 // Internal function to generate the kernel codes for the PRNGs
 void ClPRNG::generateBufferKernel(std::string name, std::string type, std::string src) {
+    this->source_ready = false;
+    this->program_ready = false;
+    this->generator_ready = false;
     static std::string tmp = std::string((type=="double") ? " #pragma OPENCL EXTENSION cl_khr_fp64 : enable \n" : "");
     switch(this->LookupPRNG(name)) {
         case 1 :
@@ -352,6 +355,8 @@ void ClPRNG::generateBufferKernel(std::string name, std::string type, std::strin
 // for the program of the stream object
 void ClPRNG::BuildSource() {
     this->source_ready = false;
+    this->program_ready = false;
+    this->generator_ready = false;
     std::string &kernel_src = rng_source;
     this->generateBufferKernel(std::string(rng_name), std::string(rng_precision), kernel_src);
     this->source_ready = true;
@@ -361,6 +366,7 @@ void ClPRNG::BuildSource() {
 // codes into the program of the stream object
 cl_int ClPRNG::BuildKernelProgram() {
     this->program_ready = false;
+    this->generator_ready = false;
     cl_int err;
     if (init_flag && source_ready) {
         cl::Program::Sources sources(1, std::make_pair(rng_source.c_str(), rng_source.length()));
@@ -422,9 +428,12 @@ cl_int ClPRNG::ReadyGenerator() {
         return -1;
     }
 
+    // Initialize the counters that tracks available random number generators
+    size_t numPRNGs = (size_t)(this->wkgrp_count * this->wkgrp_size);
+
     // Create the buffer storing the states of the PRNGs
     this->SetStateSize();
-    size_t stateBufSize = (size_t)(this->wkgrp_count * this->wkgrp_size) * this->state_size;
+    size_t stateBufSize = numPRNGs * this->state_size;
     this->stateBuffer_id = clCreateBuffer(this->context_id, CL_MEM_READ_WRITE, stateBufSize, NULL, &err);
     if (err) {
         std::cout << "ERROR: Unable to create state buffer or PRNG!" << std::endl;
@@ -434,8 +443,9 @@ cl_int ClPRNG::ReadyGenerator() {
 
     // Create the temporary buffer in which random numbers are generated.
     // These numbers will be copied to the desired destination when required.
-    size_t outBufSize = (size_t)(this->wkgrp_count * this->wkgrp_size) * typeSize;
-    this->tmpOutputBuffer_id = clCreateBuffer(this->context_id, CL_MEM_READ_WRITE, outBufSize, NULL, &err);
+    size_t bufMult = 2;
+    this->total_count = bufMult * numPRNGs;
+    this->tmpOutputBuffer_id = clCreateBuffer(this->context_id, CL_MEM_READ_WRITE, this->total_count * typeSize, NULL, &err);
     if (err) {
         std::cout << "ERROR: Unable to create temporary buffer or PRNG!" << std::endl;
         return err;
@@ -443,16 +453,34 @@ cl_int ClPRNG::ReadyGenerator() {
     this->tmpOutputBuffer = tmpOutputBuffer_id;
 
     // At this point the buffers are set up...
-    // TODO:
-    // 1) Call (public) function to set the seed value
-    // 2) Call (private) function to initialize the PRNG states and save in stateBuffer
-    // 3) Call (private) function to generate a set of random numbers to fill the temporary buffer
-    // 4) Initialize the counters that tracks available random numbers
+    // Seed the PRNG
+    this->generator_ready = true;
+    err = this->SeedGenerator();
+    if (err != 0) {
+        std::cout << "ERROR: failed to seed PRNG" << std::endl;
+        this->generator_ready = false;
+        return err;
+    }
+
+    // Generate a set of random numbers to fill the temporary buffer
+    err = this->FillBuffer();
+    if (err != 0) {
+        std::cout << "ERROR: failed to fill temporary buffer while readying PRNG" << std::endl;
+        this->generator_ready = false;
+        return err;
+    }
+
+    // Initialize counters that track number of valid random numbers
+    // in the temporary buffer
+    this->offset = 0;
+    this->valid_count = bufMult * numPRNGs;
+
     return err;
 }
 
 // Function to set the size of the state for each PRNG
 void ClPRNG::SetStateSize() {
+    this->generator_ready = false;
     switch(LookupPRNG(std::string(rng_name)))
     {
         case 1:
@@ -582,6 +610,10 @@ cl_int ClPRNG::SeedGenerator() {
         std::cout << "ERROR: kernel programs for stream object has not been built!" << std::endl;
         return -3;
     }
+    if (this->generator_ready != true) {
+        std::cout << "ERROR: temporary buffers in stream object has not been set up!" << std::endl;
+        return -4;
+    }
     cl_int err;
     err = this->seed_rng.setArg(0, (const ulong)(this->seedVal));
     if (err != 0) {
@@ -614,16 +646,7 @@ cl_int ClPRNG::SeedGenerator() {
         static void *tmp_mem = malloc(state_size * (size_t)(this->wkgrp_size * this->wkgrp_count));
         this->local_state_mem = tmp_mem;
     }
-    err = this->com_queue.enqueueReadBuffer(this->stateBuffer, true, 0, this->state_size * (size_t)(this->wkgrp_size * this->wkgrp_count), this->local_state_mem, NULL, &event);
-    if (err != 0) {
-        std::cout << "ERROR: Unable to copy PRNG state from device back to host!" << std::endl;
-        return err;
-    }
-    err = cl::WaitForEvents(eventList);
-    if (err != 0) {
-        std::cout << "ERROR: Unable to wait for copying PRNG state from device to host!" << std::endl;
-        return err;
-    }
+    err = this->CopyStateToHost();
     this->seeded = true;
     return err;
 }
@@ -705,4 +728,11 @@ cl_int ClPRNG::FillBuffer() {
 void ClPRNG::SetSeed(ulong seed) {
     this->seedVal = seed;
     this->seeded = false;
+    cl_int err;
+    err = this->SeedGenerator();
+    if (err != 0) {
+        std::cout << "ERROR: failed to seed generator after setting seed value!" << std::endl;
+        return;
+    }
+    this->seeded = true;
 }
