@@ -31,12 +31,5 @@ util.o: util.h util.c
 
 all: example1
 
-install:
-	echo "Installing to "$(PREFIX)
-        $(INSTALL) -t $(PREFIX)/include ../include/clPRNG.h
-        $(INSTALL) -t $(PREFIX)/lib *.so.0.0.1
-        $(INSTALL) -t $(PREFIX)/lib *.so.0
-        $(INSTALL) -t $(PREFIX)/lib *.so
-
 clean:
 	rm -f *.o example1
