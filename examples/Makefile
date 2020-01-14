@@ -1,8 +1,11 @@
 #Optionally specify the path to the OpenCL headers
 #and uncomment the line below
 CCFLAGS=-fPIC -Wall -m64 -pthread -O3
+PREFIX?=/usr/local
 
 GCC ?= gcc
+INSTALL ?= install
+
 ifeq ($(OS),Windows_NT)
     CCFLAGS+= -I${CUDA_PATH}\\include
     LDFLAGS+=-L${CUDA_PATH}\\lib\\x64 -L../src
@@ -27,6 +30,13 @@ util.o: util.h util.c
 	${GCC} ${CCFLAGS} -c util.c -o util.o
 
 all: example1
+
+install:
+	echo "Installing to "$(PREFIX)
+        $(INSTALL) -t $(PREFIX)/include ../include/clPRNG.h
+        $(INSTALL) -t $(PREFIX)/lib *.so.0.0.1
+        $(INSTALL) -t $(PREFIX)/lib *.so.0
+        $(INSTALL) -t $(PREFIX)/lib *.so
 
 clean:
 	rm -f *.o example1
