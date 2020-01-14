@@ -75,6 +75,7 @@ CLPRNG_DLL class ClPRNG {
         cl_mem            tmpOutputBuffer_id;  // OpenCL C API (to support buffer copy)
 
         size_t            state_size;          // Information for PRNG state
+        bool              loaded_state;        // Flag for whether PRNG states are loaded to device
         void *            local_state_mem;     // Host side storage of PRNG state
 
         size_t            total_count;         // Information for temporary output buffer
@@ -87,11 +88,14 @@ CLPRNG_DLL class ClPRNG {
         const char*       rng_name;            // Name of PRNG
         const char*       rng_precision;       // Precision of PRNG
         std::string       rng_source;          // Kernel source code of PRNG
+
         ulong             seedVal;             // Seed value used to seed the PRNG
 
         bool              init_flag;           // Flag for whether stream object has been initialized
         bool              source_ready;        // Flag for whether kernel source is built
         bool              program_ready;       // Flag for whether kernel program is compiled
+        bool              seeded;              // Flag for whether PRNG has been seeded
+        bool              buffers_ready;       // Flag for whether the temporary output buffers are ready
 
         int LookupPRNG(std::string name);
         void generateBufferKernel(std::string name, std::string type, std::string src);
@@ -106,33 +110,38 @@ CLPRNG_DLL class ClPRNG {
         void Init(cl_device_id dev_id, const char * name);
 
         void BuildSource();
-        std::string GetSource() { return rng_source; }
+        std::string GetSource() { return this->rng_source; }
 
         cl_int BuildKernelProgram();
         cl_int ReadyGenerator(); // To complete
-        cl_int SeedGenerator(); // To implement
-        cl_int GenerateStream(); // To implement
+        cl_int SeedGenerator();
+        cl_int FillBuffer();
+        bool GetStateOfStateBuffer() { return this->loaded_state; }
+        cl_int CopyStateToDevice();
+        cl_int CopyStateToHost();
 
-        size_t GetNumBufferEntries() { return total_count; }
-        void SetNumBufferEntries(size_t num) { total_count = num; }
+        size_t GetNumBufferEntries() { return this->total_count; }
+        void SetNumBufferEntries(size_t num) { this->total_count = num; }
 
-        size_t GetNumValidEntries() { return valid_count; }
-        void SetNumValidEntries(size_t num) { valid_count = num; }
+        size_t GetNumValidEntries() { return this->valid_count; }
+        void SetNumValidEntries(size_t num) { this->valid_count = num; }
 
         void SetBufferOffset(size_t ptr);
         size_t GetBufferOffset();
 
-        std::string GetPrecision() { return std::string(rng_precision); }
+        std::string GetPrecision() { return std::string(this->rng_precision); }
         int SetPrecision(const char * precision);
 
-        std::string GetName() { return std::string(rng_name); }
-        void SetName(const char * name) { rng_name = name; }
+        std::string GetName() { return std::string(this->rng_name); }
+        void SetName(const char * name) { this->rng_name = name; }
 
-        void SetSeed(ulong seed) { seedVal = seed; }
+        ulong GetSeed() { return this->seedVal; }
+        void SetSeed(ulong seed);
 
-        bool IsInitialized() { return init_flag; }
-        bool IsSourceReady() { return source_ready; }
-        bool IsProgramReady() { return program_ready; }
+        bool IsInitialized() { return this->init_flag; }
+        bool IsSourceReady() { return this->source_ready; }
+        bool IsProgramReady() { return this->program_ready; }
+        bool IsSeeded() { return this->seeded; }
 
 	cl_int CopyBufferEntries(cl_mem dst, size_t dst_offset, size_t count);
 };
