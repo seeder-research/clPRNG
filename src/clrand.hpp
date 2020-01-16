@@ -33,27 +33,27 @@
 #include "../generator/xorshift1024.hpp"
 #include "../generator/xorshift6432star.hpp"
 
-#ifndef __CLPRNG_HPP
-    #define __CLPRNG_HPP
-    #define CLPRNG_VERSION_MAJOR 0
-    #define CLPRNG_VERSION_MINOR 0
-    #define CLPRNG_VERSION_REV   1
+#ifndef __CLRAND_HPP
+    #define __CLRAND_HPP
+    #define CLRAND_VERSION_MAJOR 0
+    #define CLRAND_VERSION_MINOR 0
+    #define CLRAND_VERSION_REV   1
 #endif
 
 #if defined( __WIN32 )
-    #if defined( CLPRNG_STATIC )
-        #define CLPRNG_DLL
-    #elif  defined( CLPRNG_EXPORT )
-        #define CLPRNG_DLL __declspec(dllexport)
+    #if defined( clRAND_STATIC )
+        #define CLRAND_DLL
+    #elif  defined( clRAND_EXPORT )
+        #define CLRAND_DLL __declspec(dllexport)
     #else
-        #define CLPRNG_DLL __declspec(dllimport)
+        #define CLRAND_DLL __declspec(dllimport)
     #endif
 #else
-    #define CLPRNG_DLL
+    #define CLRAND_DLL
 #endif
 
 // Prototype class
-CLPRNG_DLL class ClPRNG {
+CLRAND_DLL class clRAND {
     private:
         cl::Device        device;              // OpenCL C++ API
         cl_device_id      device_id;           // OpenCL C API (to support buffer copy)
@@ -105,8 +105,8 @@ CLPRNG_DLL class ClPRNG {
         cl_int PrivateGenerateStream(); // To implement
 
     public:
-        ClPRNG();
-        ~ClPRNG();
+        clRAND();
+        ~clRAND();
 
         void Init(cl_device_id dev_id, const char * name);
 
@@ -152,37 +152,37 @@ CLPRNG_DLL class ClPRNG {
 #ifdef __cplusplus
 extern "C" {
 #endif
-CLPRNG_DLL ClPRNG* clPRNG_create_stream();
+CLRAND_DLL clRAND* clrand_create_stream();
 
-CLPRNG_DLL cl_int clPRNG_initialize_prng(ClPRNG* p, cl_device_id dev_id, const char *name);
+CLRAND_DLL cl_int clrand_initialize_prng(clRAND* p, cl_device_id dev_id, const char *name);
 
-CLPRNG_DLL const char * clPRNG_get_prng_precision(ClPRNG* p) {
+CLRAND_DLL const char * clrand_get_prng_precision(clRAND* p) {
     return (*p).GetPrecision().c_str();
 }
 
-CLPRNG_DLL int clPRNG_set_prng_precision(ClPRNG* p, const char* precision) {
+CLRAND_DLL int clrand_set_prng_precision(clRAND* p, const char* precision) {
     return (*p).SetPrecision(precision);
 }
 
-CLPRNG_DLL const char * clPRNG_get_prng_name(ClPRNG* p) {
+CLRAND_DLL const char * clrand_get_prng_name(clRAND* p) {
     return (*p).GetName().c_str();
 }
 
-CLPRNG_DLL cl_int clPRNG_set_prng_name(ClPRNG* p, const char* name) {
+CLRAND_DLL cl_int clrand_set_prng_name(clRAND* p, const char* name) {
     (*p).SetName(name);
     (*p).BuildSource();
     return (*p).BuildKernelProgram();
 }
 
-CLPRNG_DLL void clPRNG_set_prng_seed(ClPRNG* p, ulong seedNum) {
+CLRAND_DLL void clrand_set_prng_seed(clRAND* p, ulong seedNum) {
     (*p).SetSeed(seedNum);
 }
 
-CLPRNG_DLL cl_int clPRNG_ready_stream(ClPRNG* p) {
+CLRAND_DLL cl_int clrand_ready_stream(clRAND* p) {
     return (*p).ReadyGenerator();
 }
 
-CLPRNG_DLL cl_int clPRNG_generate_stream(ClPRNG* p, int count, cl_mem dst);
+CLRAND_DLL cl_int clrand_generate_stream(clRAND* p, int count, cl_mem dst);
 
 #ifdef __cplusplus
 }
