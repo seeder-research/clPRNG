@@ -14,19 +14,8 @@
     #include <CL/cl.h>
 #endif
 
-#define ISAAC_RANDSIZL   (8)
-#define ISAAC_RANDSIZ    (1<<ISAAC_RANDSIZL)
-
-void isaac_seed(isaac_state* state, ulong j){
-	state->aa = j;
-	state->bb = j ^ 123456789;
-	state->cc = j + 123456789;
-	state->idx = ISAAC_RANDSIZ;
-	for(int i=0;i<ISAAC_RANDSIZ;i++){
-		j=6906969069UL * j + 1234567UL; //LCG
-		state->mm[i]=j;
-		//isaac_advance(state);
-	}
+void mwc64x_seed(mwc64x_state* state, unsigned long j){
+	state->xc=j;
 }
 
 int main(int argc, char **argv) {
@@ -53,7 +42,7 @@ int main(int argc, char **argv) {
     }
 
     clRAND* test = clrand_create_stream();
-    clrand_initialize_prng(test, (*tmpStructPtr).target_device, (*tmpStructPtr).ctx, CLRAND_GENERATOR_ISAAC);
+    clrand_initialize_prng(test, (*tmpStructPtr).target_device, (*tmpStructPtr).ctx, CLRAND_GENERATOR_MWC64X);
 
     err = test->SetupWorkConfigurations();
     if (err) {
@@ -78,22 +67,22 @@ int main(int argc, char **argv) {
     size_t stateStructSize = test->GetStateStructSize();
     size_t stateMemSize = test->GetStateBufferSize();
     // Prepare host memory to copy RNG states from device to host
-    isaac_state* state_mem = new isaac_state[numPRNGs];
-    if (stateMemSize == numPRNGs * sizeof(isaac_state)) {
+    mwc64x_state* state_mem = new mwc64x_state[numPRNGs];
+    if (stateMemSize == numPRNGs * sizeof(mwc64x_state)) {
         err = test->CopyStateToHost((void*)(state_mem));
         if (err) {
             std::cout << "ERROR: unable to copy state buffer to host!" << std::endl;
         }
     } else {
         std::cout << "ERROR: something went wrong setting up memory sizes!" << std::endl;
-        std::cout << "State Structure Size (host side): " << sizeof(isaac_state) << std::endl;
+        std::cout << "State Structure Size (host side): " << sizeof(mwc64x_state) << std::endl;
         std::cout << "State Structure Size (obj side): " << stateStructSize << std::endl;
         std::cout << "Number of PRNGs: " << numPRNGs << std::endl;
         std::cout << "Size of state buffer: " << stateMemSize << std::endl;
     }
 
     // Generate RNG states on host side
-    isaac_state* golden_states = new isaac_state[numPRNGs];
+    mwc64x_state* golden_states = new mwc64x_state[numPRNGs];
     ulong init_seedVal = test->GetSeed();
     uint err_counts = 0;
     for (int idx = 0; idx < numPRNGs; idx++) {
@@ -103,28 +92,11 @@ int main(int argc, char **argv) {
         if (newSeed == 0) {
             newSeed += 1;
         }
-        isaac_seed(&golden_states[idx], newSeed);
-        if (golden_states[idx].aa != state_mem[idx].aa) {
+        mwc64x_seed(&golden_states[idx], newSeed);
+        if (golden_states[idx].xc != state_mem[idx].xc) {
             err_counts++;
-            std::cout << "Mismatch in aa at idx = " << idx << std::endl;
+            std::cout << "Mismatch in xc at idx = " << idx << std::endl;
             continue;
-        }
-        if (golden_states[idx].bb != state_mem[idx].bb) {
-            err_counts++;
-            std::cout << "Mismatch in bb at idx = " << idx << std::endl;
-            continue;
-        }
-        if (golden_states[idx].cc != state_mem[idx].cc) {
-            err_counts++;
-            std::cout << "Mismatch in cc at idx = " << idx << std::endl;
-            continue;
-        }
-        for (int idx1 = 0; idx1 < ISAAC_RANDSIZ ; idx1++) {
-            if (golden_states[idx].mm[idx1] != state_mem[idx].mm[idx1]) {
-                err_counts++;
-                std::cout << "Mismatch in mm at idx = " << idx << std::endl;
-                break;
-            }
         }
     }
     if (err_counts == 0) {

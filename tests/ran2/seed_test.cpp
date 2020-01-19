@@ -14,19 +14,29 @@
     #include <CL/cl.h>
 #endif
 
-#define ISAAC_RANDSIZL   (8)
-#define ISAAC_RANDSIZ    (1<<ISAAC_RANDSIZL)
+#define   IM1 2147483563
+#define   IA1 40014
+#define   IQ1 53668
+#define   IR1 12211
+#define   NTAB 32
 
-void isaac_seed(isaac_state* state, ulong j){
-	state->aa = j;
-	state->bb = j ^ 123456789;
-	state->cc = j + 123456789;
-	state->idx = ISAAC_RANDSIZ;
-	for(int i=0;i<ISAAC_RANDSIZ;i++){
-		j=6906969069UL * j + 1234567UL; //LCG
-		state->mm[i]=j;
-		//isaac_advance(state);
+void ran2_seed(ran2_state* state, ulong seed){
+	if(seed == 0){
+		seed = 1;
 	}
+	state->idum = seed;
+	state->idum2 = seed>>32;
+	for(int j = NTAB + 7; j >= 0; j--){
+		short k = state->idum / IQ1;
+		state->idum = IA1 * (state->idum - k*IQ1) - k*IR1;
+		if(state->idum < 0){
+			state->idum += IM1;
+		}
+		if(j < NTAB){
+			state->iv[j] = state->idum;
+		}
+	}
+	state->iy = state->iv[0];
 }
 
 int main(int argc, char **argv) {
@@ -53,7 +63,7 @@ int main(int argc, char **argv) {
     }
 
     clRAND* test = clrand_create_stream();
-    clrand_initialize_prng(test, (*tmpStructPtr).target_device, (*tmpStructPtr).ctx, CLRAND_GENERATOR_ISAAC);
+    clrand_initialize_prng(test, (*tmpStructPtr).target_device, (*tmpStructPtr).ctx, CLRAND_GENERATOR_RAN2);
 
     err = test->SetupWorkConfigurations();
     if (err) {
@@ -78,22 +88,22 @@ int main(int argc, char **argv) {
     size_t stateStructSize = test->GetStateStructSize();
     size_t stateMemSize = test->GetStateBufferSize();
     // Prepare host memory to copy RNG states from device to host
-    isaac_state* state_mem = new isaac_state[numPRNGs];
-    if (stateMemSize == numPRNGs * sizeof(isaac_state)) {
+    ran2_state* state_mem = new ran2_state[numPRNGs];
+    if (stateMemSize == numPRNGs * sizeof(ran2_state)) {
         err = test->CopyStateToHost((void*)(state_mem));
         if (err) {
             std::cout << "ERROR: unable to copy state buffer to host!" << std::endl;
         }
     } else {
         std::cout << "ERROR: something went wrong setting up memory sizes!" << std::endl;
-        std::cout << "State Structure Size (host side): " << sizeof(isaac_state) << std::endl;
+        std::cout << "State Structure Size (host side): " << sizeof(ran2_state) << std::endl;
         std::cout << "State Structure Size (obj side): " << stateStructSize << std::endl;
         std::cout << "Number of PRNGs: " << numPRNGs << std::endl;
         std::cout << "Size of state buffer: " << stateMemSize << std::endl;
     }
 
     // Generate RNG states on host side
-    isaac_state* golden_states = new isaac_state[numPRNGs];
+    ran2_state* golden_states = new ran2_state[numPRNGs];
     ulong init_seedVal = test->GetSeed();
     uint err_counts = 0;
     for (int idx = 0; idx < numPRNGs; idx++) {
@@ -103,26 +113,26 @@ int main(int argc, char **argv) {
         if (newSeed == 0) {
             newSeed += 1;
         }
-        isaac_seed(&golden_states[idx], newSeed);
-        if (golden_states[idx].aa != state_mem[idx].aa) {
+        ran2_seed(&golden_states[idx], newSeed);
+        if (golden_states[idx].idum != state_mem[idx].idum) {
             err_counts++;
-            std::cout << "Mismatch in aa at idx = " << idx << std::endl;
+            std::cout << "Mismatch in idum at idx = " << idx << std::endl;
             continue;
         }
-        if (golden_states[idx].bb != state_mem[idx].bb) {
+        if (golden_states[idx].idum2 != state_mem[idx].idum2) {
             err_counts++;
-            std::cout << "Mismatch in bb at idx = " << idx << std::endl;
+            std::cout << "Mismatch in idum2 at idx = " << idx << std::endl;
             continue;
         }
-        if (golden_states[idx].cc != state_mem[idx].cc) {
+        if (golden_states[idx].iy != state_mem[idx].iy) {
             err_counts++;
-            std::cout << "Mismatch in cc at idx = " << idx << std::endl;
+            std::cout << "Mismatch in iy at idx = " << idx << std::endl;
             continue;
         }
-        for (int idx1 = 0; idx1 < ISAAC_RANDSIZ ; idx1++) {
-            if (golden_states[idx].mm[idx1] != state_mem[idx].mm[idx1]) {
+        for (int idx1 = 0; idx1 < NTAB ; idx1++) {
+            if (golden_states[idx].iv[idx1] != state_mem[idx].iv[idx1]) {
                 err_counts++;
-                std::cout << "Mismatch in mm at idx = " << idx << std::endl;
+                std::cout << "Mismatch in iv at idx = " << idx << std::endl;
                 break;
             }
         }

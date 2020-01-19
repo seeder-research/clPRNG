@@ -14,18 +14,26 @@
     #include <CL/cl.h>
 #endif
 
-#define ISAAC_RANDSIZL   (8)
-#define ISAAC_RANDSIZ    (1<<ISAAC_RANDSIZL)
+#define TYCHE_I_ROT(a,b) (((a) >> (b)) | ((a) << (32 - (b))))
 
-void isaac_seed(isaac_state* state, ulong j){
-	state->aa = j;
-	state->bb = j ^ 123456789;
-	state->cc = j + 123456789;
-	state->idx = ISAAC_RANDSIZ;
-	for(int i=0;i<ISAAC_RANDSIZ;i++){
-		j=6906969069UL * j + 1234567UL; //LCG
-		state->mm[i]=j;
-		//isaac_advance(state);
+void tyche_i_advance(tyche_i_state* state){
+	state->b = TYCHE_I_ROT(state->b, 7) ^ state->c;
+	state->c -= state->d;
+	state->d = TYCHE_I_ROT(state->d, 8) ^ state->a;
+	state->a -= state->b;
+	state->b = TYCHE_I_ROT(state->b, 12) ^ state->c;
+	state->c -= state->d;
+	state->d = TYCHE_I_ROT(state->d, 16) ^ state->a;
+	state->a -= state->b;
+}
+
+void tyche_i_seed(tyche_i_state* state, ulong seed){
+	state->a = seed >> 32;
+	state->b = seed;
+	state->c = 2654435769;
+	state->d = 1367130551 ^ (get_global_id(0) + get_global_size(0) * (get_global_id(1) + get_global_size(1) * get_global_id(2)));
+	for(uint i=0;i<20;i++){
+		tyche_i_advance(state);
 	}
 }
 
@@ -53,7 +61,7 @@ int main(int argc, char **argv) {
     }
 
     clRAND* test = clrand_create_stream();
-    clrand_initialize_prng(test, (*tmpStructPtr).target_device, (*tmpStructPtr).ctx, CLRAND_GENERATOR_ISAAC);
+    clrand_initialize_prng(test, (*tmpStructPtr).target_device, (*tmpStructPtr).ctx, CLRAND_GENERATOR_TYCHE_I);
 
     err = test->SetupWorkConfigurations();
     if (err) {
@@ -78,22 +86,22 @@ int main(int argc, char **argv) {
     size_t stateStructSize = test->GetStateStructSize();
     size_t stateMemSize = test->GetStateBufferSize();
     // Prepare host memory to copy RNG states from device to host
-    isaac_state* state_mem = new isaac_state[numPRNGs];
-    if (stateMemSize == numPRNGs * sizeof(isaac_state)) {
+    tyche_i_state* state_mem = new tyche_i_state[numPRNGs];
+    if (stateMemSize == numPRNGs * sizeof(tyche_i_state)) {
         err = test->CopyStateToHost((void*)(state_mem));
         if (err) {
             std::cout << "ERROR: unable to copy state buffer to host!" << std::endl;
         }
     } else {
         std::cout << "ERROR: something went wrong setting up memory sizes!" << std::endl;
-        std::cout << "State Structure Size (host side): " << sizeof(isaac_state) << std::endl;
+        std::cout << "State Structure Size (host side): " << sizeof(tyche_i_state) << std::endl;
         std::cout << "State Structure Size (obj side): " << stateStructSize << std::endl;
         std::cout << "Number of PRNGs: " << numPRNGs << std::endl;
         std::cout << "Size of state buffer: " << stateMemSize << std::endl;
     }
 
     // Generate RNG states on host side
-    isaac_state* golden_states = new isaac_state[numPRNGs];
+    tyche_i_state* golden_states = new tyche_i_state[numPRNGs];
     ulong init_seedVal = test->GetSeed();
     uint err_counts = 0;
     for (int idx = 0; idx < numPRNGs; idx++) {
@@ -103,28 +111,11 @@ int main(int argc, char **argv) {
         if (newSeed == 0) {
             newSeed += 1;
         }
-        isaac_seed(&golden_states[idx], newSeed);
-        if (golden_states[idx].aa != state_mem[idx].aa) {
+        tyche_i_seed(&golden_states[idx], newSeed);
+        if (golden_states[idx].res != state_mem[idx].res) {
             err_counts++;
-            std::cout << "Mismatch in aa at idx = " << idx << std::endl;
+            std::cout << "Mismatch in res at idx = " << idx << std::endl;
             continue;
-        }
-        if (golden_states[idx].bb != state_mem[idx].bb) {
-            err_counts++;
-            std::cout << "Mismatch in bb at idx = " << idx << std::endl;
-            continue;
-        }
-        if (golden_states[idx].cc != state_mem[idx].cc) {
-            err_counts++;
-            std::cout << "Mismatch in cc at idx = " << idx << std::endl;
-            continue;
-        }
-        for (int idx1 = 0; idx1 < ISAAC_RANDSIZ ; idx1++) {
-            if (golden_states[idx].mm[idx1] != state_mem[idx].mm[idx1]) {
-                err_counts++;
-                std::cout << "Mismatch in mm at idx = " << idx << std::endl;
-                break;
-            }
         }
     }
     if (err_counts == 0) {

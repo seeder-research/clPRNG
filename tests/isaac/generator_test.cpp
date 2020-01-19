@@ -14,8 +14,21 @@
     #include <CL/cl.h>
 #endif
 
+#define RNG32
+
 #define ISAAC_RANDSIZL   (8)
 #define ISAAC_RANDSIZ    (1<<ISAAC_RANDSIZL)
+
+typedef unsigned char uchar;
+#define ind(mm,x) (*(uint *)((uchar *)(mm) + ((x) & (255 << 2))))
+//#define ind(mm,x) (*(uint *)((uint *)(mm) + (((x) >> 2) & 255)))
+#define rngstep(mix,a,b,mm,m,m2,r,x) \
+{\
+	x = *m; \
+	a = (a ^ (mix)) + *(m2++); \
+	*(m++) = y = ind(mm, x) + a + b; \
+	*(r++) = b = ind(mm, y >> 8) + x; \
+}
 
 void isaac_seed(isaac_state* state, ulong j){
 	state->aa = j;
@@ -28,6 +41,39 @@ void isaac_seed(isaac_state* state, ulong j){
 		//isaac_advance(state);
 	}
 }
+
+void isaac_advance(isaac_state* state){
+	uint a, b, x, y, *m, *m2, *r, *mend;
+	m = state->mm;
+	r = state->rr;
+	a = state->aa;
+	b = state->bb + (++state->cc);
+	for (m = state->mm, mend = m2 = m+(ISAAC_RANDSIZ/2); m < mend; ){
+		rngstep(a << 13, a, b, state->mm, m, m2, r, x);
+		rngstep(a >> 6 , a, b, state->mm, m, m2, r, x);
+		rngstep(a << 2 , a, b, state->mm, m, m2, r, x);
+		rngstep(a >> 16, a, b, state->mm, m, m2, r, x);
+	}
+	for (m2 = state->mm; m2 < mend; ){
+		rngstep(a << 13, a, b, state->mm, m, m2, r, x);
+		rngstep(a >> 6 , a, b, state->mm, m, m2, r, x);
+		rngstep(a << 2 , a, b, state->mm, m, m2, r, x);
+		rngstep(a >> 16, a, b, state->mm, m, m2, r, x);
+	}
+	state->bb = b;
+	state->aa = a;
+}
+
+#define isaac_uint(state) _isaac_uint(&state)
+uint _isaac_uint(isaac_state* state){
+	//printf("%d\n", get_global_id(0));
+	if(state->idx == ISAAC_RANDSIZ){
+		isaac_advance(state);
+		state->idx=0;
+	}
+	return state->rr[state->idx++];
+}
+
 
 int main(int argc, char **argv) {
     cl_event          event = NULL;
@@ -54,6 +100,7 @@ int main(int argc, char **argv) {
 
     clRAND* test = clrand_create_stream();
     clrand_initialize_prng(test, (*tmpStructPtr).target_device, (*tmpStructPtr).ctx, CLRAND_GENERATOR_ISAAC);
+    (*tmpStructPtr).queue = test->GetStreamQueue();
 
     err = test->SetupWorkConfigurations();
     if (err) {
@@ -63,7 +110,7 @@ int main(int argc, char **argv) {
 
     // Initialize the counters that tracks available random number generators
     size_t numPRNGs = test->GetNumberOfRNGs();
-    size_t bufMult = 2;
+    size_t bufMult = 1;
 
     err = test->SetupStreamBuffers(bufMult, numPRNGs);
     test->SetReady();
@@ -128,13 +175,65 @@ int main(int argc, char **argv) {
         }
     }
     if (err_counts == 0) {
-        std::cout << "No errors detected!" << std::endl;
+        std::cout << "No errors detected after seeding!" << std::endl;
+    } else {
+        std::cout << err_counts << " errors detected after seeding!" << std::endl;
+        return -2;
     }
 
+    std::cout << "Attempting to generate random uint on device..." << std::endl;
+    err = test->FillBuffer();
+    if (err) {
+        std::cout << "ERROR: unable to fill temporary buffer with random numbers" << std::endl;
+        return err;
+    }
+
+    uint* deviceRandomNumbers = new uint[numPRNGs];
+    cl_mem deviceRandomBuffer = clCreateBuffer((*tmpStructPtr).ctx, CL_MEM_READ_WRITE, test->GetNumBufferEntries() * sizeof(uint), NULL, &err);
+    if (err) {
+        std::cout << "ERROR: unable to create buffer to extract random uint!" << std::endl;
+        return err;
+    }
+    
+    err = test->CopyBufferEntries(deviceRandomBuffer, 0, test->GetNumBufferEntries());
+    if (err) {
+        std::cout << "ERROR: unable to perform buffer-to-buffer copy to extract random uint!" << std::endl;
+        return err;
+    }
+    err = clEnqueueReadBuffer((*tmpStructPtr).queue, deviceRandomBuffer, true, 0, test->GetNumBufferEntries() * sizeof(uint), deviceRandomNumbers, 0, NULL, &event);
+    if (err) {
+        std::cout << "ERROR: unable to enqueue read buffer to extract random uint!" << std::endl;
+        return err;
+    }
+    err = clWaitForEvents(1, &event);
+    if (err) {
+        std::cout << "ERROR: unable to wait for reading buffer to extract random uint!" << std::endl;
+        return err;
+    }
+    std::cout << "Attempting to generate random uint on host..." << std::endl;
+
+    err_counts = 0;
+    uint* hostRandomNumbers = new uint[numPRNGs];
+    for (int idx = 0; idx < numPRNGs; idx++) {
+        hostRandomNumbers[idx] = isaac_uint(golden_states[idx]);
+        if (hostRandomNumbers[idx] != deviceRandomNumbers[idx]) {
+            std::cout << "ERROR: numbers do not match at idx = " << idx << std::endl;
+            err_counts++;
+        }
+    }
+    if (err_counts == 0) {
+        std::cout << "No errors detected after random number generation!" << std::endl;
+    } else {
+        std::cout << err_counts << " errors detected after seeding!" << std::endl;
+        return -2;
+    }
+   
     // Completed checks...
     std::cout << "Checks completed!..." << std::endl;
     delete [] state_mem;
     delete [] golden_states;
+    delete [] deviceRandomNumbers;
+    delete [] hostRandomNumbers;
     free(tmpStructPtr);
     return res;
 }

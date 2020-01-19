@@ -14,19 +14,14 @@
     #include <CL/cl.h>
 #endif
 
-#define ISAAC_RANDSIZL   (8)
-#define ISAAC_RANDSIZ    (1<<ISAAC_RANDSIZL)
+void lcg6432_seed(lcg6432_state* state, unsigned long j){
+	*state=j;
+}
 
-void isaac_seed(isaac_state* state, ulong j){
-	state->aa = j;
-	state->bb = j ^ 123456789;
-	state->cc = j + 123456789;
-	state->idx = ISAAC_RANDSIZ;
-	for(int i=0;i<ISAAC_RANDSIZ;i++){
-		j=6906969069UL * j + 1234567UL; //LCG
-		state->mm[i]=j;
-		//isaac_advance(state);
-	}
+#define lcg6432_uint(state) _lcg6432_uint(&state)
+unsigned int _lcg6432_uint(lcg6432_state* state){
+	*state = *state * 6364136223846793005UL + 0xda3e39cb94b95bdbUL;
+	return *state>>32;
 }
 
 int main(int argc, char **argv) {
@@ -53,7 +48,8 @@ int main(int argc, char **argv) {
     }
 
     clRAND* test = clrand_create_stream();
-    clrand_initialize_prng(test, (*tmpStructPtr).target_device, (*tmpStructPtr).ctx, CLRAND_GENERATOR_ISAAC);
+    clrand_initialize_prng(test, (*tmpStructPtr).target_device, (*tmpStructPtr).ctx, CLRAND_GENERATOR_LCG6432);
+    (*tmpStructPtr).queue = test->GetStreamQueue();
 
     err = test->SetupWorkConfigurations();
     if (err) {
@@ -63,7 +59,7 @@ int main(int argc, char **argv) {
 
     // Initialize the counters that tracks available random number generators
     size_t numPRNGs = test->GetNumberOfRNGs();
-    size_t bufMult = 2;
+    size_t bufMult = 1;
 
     err = test->SetupStreamBuffers(bufMult, numPRNGs);
     test->SetReady();
@@ -78,8 +74,8 @@ int main(int argc, char **argv) {
     size_t stateStructSize = test->GetStateStructSize();
     size_t stateMemSize = test->GetStateBufferSize();
     // Prepare host memory to copy RNG states from device to host
-    isaac_state* state_mem = new isaac_state[numPRNGs];
-    if (stateMemSize == numPRNGs * sizeof(isaac_state)) {
+    lcg6432_state* state_mem = new lcg6432_state[numPRNGs];
+    if (stateMemSize == numPRNGs * sizeof(lcg6432_state)) {
         err = test->CopyStateToHost((void*)(state_mem));
         if (err) {
             std::cout << "ERROR: unable to copy state buffer to host!" << std::endl;
@@ -93,7 +89,7 @@ int main(int argc, char **argv) {
     }
 
     // Generate RNG states on host side
-    isaac_state* golden_states = new isaac_state[numPRNGs];
+    lcg6432_state* golden_states = new lcg6432_state[numPRNGs];
     ulong init_seedVal = test->GetSeed();
     uint err_counts = 0;
     for (int idx = 0; idx < numPRNGs; idx++) {
@@ -103,38 +99,73 @@ int main(int argc, char **argv) {
         if (newSeed == 0) {
             newSeed += 1;
         }
-        isaac_seed(&golden_states[idx], newSeed);
-        if (golden_states[idx].aa != state_mem[idx].aa) {
+        lcg6432_seed(&golden_states[idx], newSeed);
+        if (golden_states[idx] != state_mem[idx]) {
             err_counts++;
-            std::cout << "Mismatch in aa at idx = " << idx << std::endl;
+            std::cout << "Mismatch at idx = " << idx << std::endl;
             continue;
-        }
-        if (golden_states[idx].bb != state_mem[idx].bb) {
-            err_counts++;
-            std::cout << "Mismatch in bb at idx = " << idx << std::endl;
-            continue;
-        }
-        if (golden_states[idx].cc != state_mem[idx].cc) {
-            err_counts++;
-            std::cout << "Mismatch in cc at idx = " << idx << std::endl;
-            continue;
-        }
-        for (int idx1 = 0; idx1 < ISAAC_RANDSIZ ; idx1++) {
-            if (golden_states[idx].mm[idx1] != state_mem[idx].mm[idx1]) {
-                err_counts++;
-                std::cout << "Mismatch in mm at idx = " << idx << std::endl;
-                break;
-            }
         }
     }
     if (err_counts == 0) {
-        std::cout << "No errors detected!" << std::endl;
+        std::cout << "No errors detected after seeding!" << std::endl;
+    } else {
+        std::cout << err_counts << " errors detected after seeding!" << std::endl;
+        return -2;
     }
 
+    std::cout << "Attempting to generate random uint on device..." << std::endl;
+    err = test->FillBuffer();
+    if (err) {
+        std::cout << "ERROR: unable to fill temporary buffer with random numbers" << std::endl;
+        return err;
+    }
+
+    uint* deviceRandomNumbers = new uint[numPRNGs];
+    cl_mem deviceRandomBuffer = clCreateBuffer((*tmpStructPtr).ctx, CL_MEM_READ_WRITE, test->GetNumBufferEntries() * sizeof(uint), NULL, &err);
+    if (err) {
+        std::cout << "ERROR: unable to create buffer to extract random uint!" << std::endl;
+        return err;
+    }
+    
+    err = test->CopyBufferEntries(deviceRandomBuffer, 0, test->GetNumBufferEntries());
+    if (err) {
+        std::cout << "ERROR: unable to perform buffer-to-buffer copy to extract random uint!" << std::endl;
+        return err;
+    }
+    err = clEnqueueReadBuffer((*tmpStructPtr).queue, deviceRandomBuffer, true, 0, test->GetNumBufferEntries() * sizeof(uint), deviceRandomNumbers, 0, NULL, &event);
+    if (err) {
+        std::cout << "ERROR: unable to enqueue read buffer to extract random uint!" << std::endl;
+        return err;
+    }
+    err = clWaitForEvents(1, &event);
+    if (err) {
+        std::cout << "ERROR: unable to wait for reading buffer to extract random uint!" << std::endl;
+        return err;
+    }
+    std::cout << "Attempting to generate random uint on host..." << std::endl;
+
+    err_counts = 0;
+    uint* hostRandomNumbers = new uint[numPRNGs];
+    for (int idx = 0; idx < numPRNGs; idx++) {
+        hostRandomNumbers[idx] = lcg6432_uint(golden_states[idx]);
+        if (hostRandomNumbers[idx] != deviceRandomNumbers[idx]) {
+            std::cout << "ERROR: numbers do not match at idx = " << idx << std::endl;
+            err_counts++;
+        }
+    }
+    if (err_counts == 0) {
+        std::cout << "No errors detected after random number generation!" << std::endl;
+    } else {
+        std::cout << err_counts << " errors detected after seeding!" << std::endl;
+        return -2;
+    }
+   
     // Completed checks...
     std::cout << "Checks completed!..." << std::endl;
     delete [] state_mem;
     delete [] golden_states;
+    delete [] deviceRandomNumbers;
+    delete [] hostRandomNumbers;
     free(tmpStructPtr);
     return res;
 }

@@ -14,19 +14,44 @@
     #include <CL/cl.h>
 #endif
 
-#define ISAAC_RANDSIZL   (8)
-#define ISAAC_RANDSIZ    (1<<ISAAC_RANDSIZL)
+#define TINYMT64J_MAT1 0xfa051f40U
+#define TINYMT64J_MAT2 0xffd0fff4U;
+#define TINYMT64J_TMAT UINT64_C(0x58d02ffeffbfffbc)
 
-void isaac_seed(isaac_state* state, ulong j){
-	state->aa = j;
-	state->bb = j ^ 123456789;
-	state->cc = j + 123456789;
-	state->idx = ISAAC_RANDSIZ;
-	for(int i=0;i<ISAAC_RANDSIZ;i++){
-		j=6906969069UL * j + 1234567UL; //LCG
-		state->mm[i]=j;
-		//isaac_advance(state);
-	}
+#define TINYMT64_MIN_LOOP 8
+
+const ulong tinymt64_mask = 0x7fffffffffffffffUL;
+
+inline static void
+tinymt64_period_certification(tinymt64wp_t * tiny)
+{
+    if ((tiny->s0 & tinymt64_mask) == 0 &&
+        tiny->s1 == 0) {
+        tiny->s0 = 'T';
+        tiny->s1 = 'M';
+    }
+}
+
+inline static void
+tinymt64_init(tinymt64wp_t * tiny, ulong seed)
+{
+    ulong status[2];
+    status[0] = seed ^ ((ulong)tiny->mat1 << 32);
+    status[1] = tiny->mat2 ^ tiny->tmat;
+    for (int i = 1; i < TINYMT64_MIN_LOOP; i++) {
+        status[i & 1] ^= i + 6364136223846793005UL
+            * (status[(i - 1) & 1] ^ (status[(i - 1) & 1] >> 62));
+    }
+    tiny->s0 = status[0];
+    tiny->s1 = status[1];
+    tinymt64_period_certification(tiny);
+}
+
+void tinymt64_seed(tinymt64_state* state, ulong seed){
+	state->mat1=TINYMT64J_MAT1;
+	state->mat2=TINYMT64J_MAT2;
+	state->tmat=TINYMT64J_TMAT;
+	tinymt64_init(state, seed);
 }
 
 int main(int argc, char **argv) {
@@ -53,7 +78,7 @@ int main(int argc, char **argv) {
     }
 
     clRAND* test = clrand_create_stream();
-    clrand_initialize_prng(test, (*tmpStructPtr).target_device, (*tmpStructPtr).ctx, CLRAND_GENERATOR_ISAAC);
+    clrand_initialize_prng(test, (*tmpStructPtr).target_device, (*tmpStructPtr).ctx, CLRAND_GENERATOR_TINYMT64);
 
     err = test->SetupWorkConfigurations();
     if (err) {
@@ -78,22 +103,22 @@ int main(int argc, char **argv) {
     size_t stateStructSize = test->GetStateStructSize();
     size_t stateMemSize = test->GetStateBufferSize();
     // Prepare host memory to copy RNG states from device to host
-    isaac_state* state_mem = new isaac_state[numPRNGs];
-    if (stateMemSize == numPRNGs * sizeof(isaac_state)) {
+    tinymt64_state* state_mem = new tinymt64_state[numPRNGs];
+    if (stateMemSize == numPRNGs * sizeof(tinymt64_state)) {
         err = test->CopyStateToHost((void*)(state_mem));
         if (err) {
             std::cout << "ERROR: unable to copy state buffer to host!" << std::endl;
         }
     } else {
         std::cout << "ERROR: something went wrong setting up memory sizes!" << std::endl;
-        std::cout << "State Structure Size (host side): " << sizeof(isaac_state) << std::endl;
+        std::cout << "State Structure Size (host side): " << sizeof(tinymt64_state) << std::endl;
         std::cout << "State Structure Size (obj side): " << stateStructSize << std::endl;
         std::cout << "Number of PRNGs: " << numPRNGs << std::endl;
         std::cout << "Size of state buffer: " << stateMemSize << std::endl;
     }
 
     // Generate RNG states on host side
-    isaac_state* golden_states = new isaac_state[numPRNGs];
+    tinymt64_state* golden_states = new tinymt64_state[numPRNGs];
     ulong init_seedVal = test->GetSeed();
     uint err_counts = 0;
     for (int idx = 0; idx < numPRNGs; idx++) {
@@ -103,28 +128,31 @@ int main(int argc, char **argv) {
         if (newSeed == 0) {
             newSeed += 1;
         }
-        isaac_seed(&golden_states[idx], newSeed);
-        if (golden_states[idx].aa != state_mem[idx].aa) {
+        tinymt64_seed(&golden_states[idx], newSeed);
+        if (golden_states[idx].s0 != state_mem[idx].s0) {
             err_counts++;
-            std::cout << "Mismatch in aa at idx = " << idx << std::endl;
+            std::cout << "Mismatch in s0 at idx = " << idx << std::endl;
             continue;
         }
-        if (golden_states[idx].bb != state_mem[idx].bb) {
+        if (golden_states[idx].s1 != state_mem[idx].s1) {
             err_counts++;
-            std::cout << "Mismatch in bb at idx = " << idx << std::endl;
+            std::cout << "Mismatch in s1 at idx = " << idx << std::endl;
             continue;
         }
-        if (golden_states[idx].cc != state_mem[idx].cc) {
+        if (golden_states[idx].mat1 != state_mem[idx].mat1) {
             err_counts++;
-            std::cout << "Mismatch in cc at idx = " << idx << std::endl;
+            std::cout << "Mismatch in mat1 at idx = " << idx << std::endl;
             continue;
         }
-        for (int idx1 = 0; idx1 < ISAAC_RANDSIZ ; idx1++) {
-            if (golden_states[idx].mm[idx1] != state_mem[idx].mm[idx1]) {
-                err_counts++;
-                std::cout << "Mismatch in mm at idx = " << idx << std::endl;
-                break;
-            }
+        if (golden_states[idx].mat2 != state_mem[idx].mat2) {
+            err_counts++;
+            std::cout << "Mismatch in mat2 at idx = " << idx << std::endl;
+            continue;
+        }
+        if (golden_states[idx].tmat != state_mem[idx].tmat) {
+            err_counts++;
+            std::cout << "Mismatch in tmat at idx = " << idx << std::endl;
+            continue;
         }
     }
     if (err_counts == 0) {

@@ -52,6 +52,30 @@
     #define CLRAND_DLL
 #endif
 
+enum clrandRngType {
+    CLRAND_GENERATOR_ISAAC            = 1,
+    CLRAND_GENERATOR_KISS09           = 2,
+    CLRAND_GENERATOR_KISS99           = 3,
+    CLRAND_GENERATOR_LCG6432          = 4,
+    CLRAND_GENERATOR_LCG12864         = 5,
+    CLRAND_GENERATOR_LFIB             = 6,
+    CLRAND_GENERATOR_MRG31K3P         = 7,
+    CLRAND_GENERATOR_MRG63K3A         = 8,
+    CLRAND_GENERATOR_MSWS             = 9,
+    CLRAND_GENERATOR_MT19937          = 10,
+    CLRAND_GENERATOR_MWC64X           = 11,
+    CLRAND_GENERATOR_PCG6432          = 12,
+    CLRAND_GENERATOR_PHILOX2X32_10    = 13,
+    CLRAND_GENERATOR_RAN2             = 14,
+    CLRAND_GENERATOR_TINYMT32         = 15,
+    CLRAND_GENERATOR_TINYMT64         = 16,
+    CLRAND_GENERATOR_TYCHE            = 17,
+    CLRAND_GENERATOR_TYCHE_I          = 18,
+    CLRAND_GENERATOR_WELL512          = 19,
+    CLRAND_GENERATOR_XORSHIFT1024     = 20,
+    CLRAND_GENERATOR_XORSHIFT6432STAR = 21
+};
+
 // Prototype class
 CLRAND_DLL class clRAND {
     private:
@@ -85,7 +109,8 @@ CLRAND_DLL class clRAND {
         cl_uint           wkgrp_size;          // For kernel launch configuration
         cl_uint           wkgrp_count;         // For kernel launch configuration
 
-        const char*       rng_name;            // Name of PRNG
+        clrandRngType     rng_type;            // Name of PRNG
+        std::string       rng_name;            // Name of PRNG
         const char*       rng_precision;       // Precision of PRNG
         std::string       rng_source;          // Kernel source code of PRNG
 
@@ -98,8 +123,8 @@ CLRAND_DLL class clRAND {
         bool              seeded;              // Flag for whether PRNG has been seeded
         bool              buffers_ready;       // Flag for whether the temporary output buffers are ready
 
-        int LookupPRNG(std::string name);
-        void generateBufferKernel(std::string name, std::string type, std::string src);
+        void LookupPRNG();
+        void generateBufferKernel(std::string type);
         cl_int fillBuffer();
         void SetStateSize();
         cl_int PrivateGenerateStream(); // To implement
@@ -108,18 +133,29 @@ CLRAND_DLL class clRAND {
         clRAND();
         ~clRAND();
 
-        void Init(cl_device_id dev_id, const char * name);
+        void Init(cl_device_id dev_id, cl_context ctx_id, clrandRngType rng_type_);
+        cl_device_id GetStreamDevice() { return device_id; }
+        cl_context GetStreamContext() { return context_id; }
+        cl_command_queue GetStreamQueue() { return com_queue_id; }
 
         void BuildSource();
         std::string GetSource() { return this->rng_source; }
 
         cl_int BuildKernelProgram();
-        cl_int ReadyGenerator(); // To complete
+        cl_int ReadyGenerator();
+        cl_int SetupWorkConfigurations();
         cl_int SeedGenerator();
+        size_t GetNumberOfRNGs() { return (this->wkgrp_size * this->wkgrp_count); }
+
+        cl_int SetupStreamBuffers(size_t bufMult, size_t numPRNGs);
         cl_int FillBuffer();
+
         bool GetStateOfStateBuffer() { return this->loaded_state; }
+        size_t GetStateStructSize() { return this->state_size; }
+        size_t GetStateBufferSize() { return (this->state_size * this->wkgrp_size * this->wkgrp_count); }
         cl_int CopyStateToDevice();
-        cl_int CopyStateToHost();
+        cl_int CopyStateToHost(void* hostPtr);
+        void* GetHostStatePtr() { return this->local_state_mem; }
 
         size_t GetNumBufferEntries() { return this->total_count; }
         void SetNumBufferEntries(size_t num) { this->total_count = num; }
@@ -133,8 +169,9 @@ CLRAND_DLL class clRAND {
         std::string GetPrecision() { return std::string(this->rng_precision); }
         int SetPrecision(const char * precision);
 
-        std::string GetName() { return std::string(this->rng_name); }
-        void SetName(const char * name) { this->rng_name = name; }
+        clrandRngType GetName() { return this->rng_type; }
+        void SetRNGType(clrandRngType rng_type_);
+        std::string GetRNGName() { return this->rng_name; }
 
         ulong GetSeed() { return this->seedVal; }
         void SetSeed(ulong seed);
@@ -146,6 +183,8 @@ CLRAND_DLL class clRAND {
         bool IsSeeded() { return this->seeded; }
 
 	cl_int CopyBufferEntries(cl_mem dst, size_t dst_offset, size_t count);
+        bool SetReady() { this->generator_ready = true; }
+
 };
 
 // External functions
@@ -154,7 +193,7 @@ extern "C" {
 #endif
 CLRAND_DLL clRAND* clrand_create_stream();
 
-CLRAND_DLL cl_int clrand_initialize_prng(clRAND* p, cl_device_id dev_id, const char *name);
+CLRAND_DLL cl_int clrand_initialize_prng(clRAND* p, cl_device_id dev_id, cl_context ctx_id, clrandRngType rng_type_);
 
 CLRAND_DLL const char * clrand_get_prng_precision(clRAND* p) {
     return (*p).GetPrecision().c_str();
@@ -165,11 +204,12 @@ CLRAND_DLL int clrand_set_prng_precision(clRAND* p, const char* precision) {
 }
 
 CLRAND_DLL const char * clrand_get_prng_name(clRAND* p) {
-    return (*p).GetName().c_str();
+    std::string tmp = (*p).GetRNGName();
+    return tmp.c_str();
 }
 
-CLRAND_DLL cl_int clrand_set_prng_name(clRAND* p, const char* name) {
-    (*p).SetName(name);
+CLRAND_DLL cl_int clrand_set_prng_name(clRAND* p, clrandRngType rng_type) {
+    (*p).SetRNGType(rng_type);
     (*p).BuildSource();
     return (*p).BuildKernelProgram();
 }

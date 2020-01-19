@@ -14,19 +14,38 @@
     #include <CL/cl.h>
 #endif
 
-#define ISAAC_RANDSIZL   (8)
-#define ISAAC_RANDSIZ    (1<<ISAAC_RANDSIZL)
+#define XORSHIFT1024_WARPSIZE 32
+#define XORSHIFT1024_WORD 32
+#define XORSHIFT1024_WORDSHIFT 10
+#define XORSHIFT1024_RAND_A 9
+#define XORSHIFT1024_RAND_B 27
+#define XORSHIFT1024_RAND_C 24
 
-void isaac_seed(isaac_state* state, ulong j){
-	state->aa = j;
-	state->bb = j ^ 123456789;
-	state->cc = j + 123456789;
-	state->idx = ISAAC_RANDSIZ;
-	for(int i=0;i<ISAAC_RANDSIZ;i++){
-		j=6906969069UL * j + 1234567UL; //LCG
-		state->mm[i]=j;
-		//isaac_advance(state);
+void xorshift1024_seed(local xorshift1024_state* stateblock, ulong seed){
+	int tid = get_local_id(0) + get_local_size(0) * (get_local_id(1) + get_local_size(1) * get_local_id(2));
+	int wid = tid / XORSHIFT1024_WARPSIZE; // Warp index in block
+	int lid = tid % XORSHIFT1024_WARPSIZE; // Thread index in warp
+	int woff = wid * (XORSHIFT1024_WARPSIZE + XORSHIFT1024_WORDSHIFT + 1) + XORSHIFT1024_WORDSHIFT + 1;
+	//printf("tid: %d, lid %d, wid %d, woff %d \n", tid, (uint)get_local_id(0), wid, woff);
+
+	uint mem = (XORSHIFT1024_WARPSIZE + XORSHIFT1024_WORDSHIFT + 1) * (get_local_size(0) * get_local_size(1) * get_local_size(2) / XORSHIFT1024_WARPSIZE) + XORSHIFT1024_WORDSHIFT + 1;
+
+	if(lid==13 && (uint)seed==0){ //shouldnt be seeded with all zeroes in wrap, but such check is simpler
+		seed=1;
 	}
+
+	if(lid<XORSHIFT1024_WORDSHIFT + 1){
+		//printf("%d setting %d to 0\n",(uint)get_global_id(0), woff - XORSHIFT1024_WORDSHIFT - 1 + lid);
+		stateblock[woff - XORSHIFT1024_WORDSHIFT - 1 + lid] = 0;
+	}
+	if(tid<XORSHIFT1024_WORDSHIFT + 1){
+		//printf("%d setting2 %d to 0\n",(uint)get_global_id(0), mem - 1 - tid);
+		stateblock[mem - 1 - tid] = 0;
+	}
+	stateblock[woff + lid] = (uint)seed;
+	//printf("%d seed set\n",(uint)get_local_id(0));
+	barrier(CLK_LOCAL_MEM_FENCE);
+	//printf("%d after barrier\n",(uint)get_local_id(0));
 }
 
 int main(int argc, char **argv) {
@@ -53,7 +72,7 @@ int main(int argc, char **argv) {
     }
 
     clRAND* test = clrand_create_stream();
-    clrand_initialize_prng(test, (*tmpStructPtr).target_device, (*tmpStructPtr).ctx, CLRAND_GENERATOR_ISAAC);
+    clrand_initialize_prng(test, (*tmpStructPtr).target_device, (*tmpStructPtr).ctx, CLRAND_GENERATOR_XORSHIFT6432STAR);
 
     err = test->SetupWorkConfigurations();
     if (err) {
@@ -63,7 +82,7 @@ int main(int argc, char **argv) {
 
     // Initialize the counters that tracks available random number generators
     size_t numPRNGs = test->GetNumberOfRNGs();
-    size_t bufMult = 2;
+    size_t bufMult = 1;
 
     err = test->SetupStreamBuffers(bufMult, numPRNGs);
     test->SetReady();
@@ -78,22 +97,22 @@ int main(int argc, char **argv) {
     size_t stateStructSize = test->GetStateStructSize();
     size_t stateMemSize = test->GetStateBufferSize();
     // Prepare host memory to copy RNG states from device to host
-    isaac_state* state_mem = new isaac_state[numPRNGs];
-    if (stateMemSize == numPRNGs * sizeof(isaac_state)) {
+    xorshift6432star_state* state_mem = new xorshift6432star_state[numPRNGs];
+    if (stateMemSize == numPRNGs * sizeof(xorshift6432star_state)) {
         err = test->CopyStateToHost((void*)(state_mem));
         if (err) {
             std::cout << "ERROR: unable to copy state buffer to host!" << std::endl;
         }
     } else {
         std::cout << "ERROR: something went wrong setting up memory sizes!" << std::endl;
-        std::cout << "State Structure Size (host side): " << sizeof(isaac_state) << std::endl;
+        std::cout << "State Structure Size (host side): " << sizeof(xorshift6432star_state) << std::endl;
         std::cout << "State Structure Size (obj side): " << stateStructSize << std::endl;
         std::cout << "Number of PRNGs: " << numPRNGs << std::endl;
         std::cout << "Size of state buffer: " << stateMemSize << std::endl;
     }
 
     // Generate RNG states on host side
-    isaac_state* golden_states = new isaac_state[numPRNGs];
+    xorshift6432star_state* golden_states = new xorshift6432star_state[numPRNGs];
     ulong init_seedVal = test->GetSeed();
     uint err_counts = 0;
     for (int idx = 0; idx < numPRNGs; idx++) {
@@ -103,28 +122,11 @@ int main(int argc, char **argv) {
         if (newSeed == 0) {
             newSeed += 1;
         }
-        isaac_seed(&golden_states[idx], newSeed);
-        if (golden_states[idx].aa != state_mem[idx].aa) {
+        xorshift6432star_seed(&golden_states[idx], newSeed);
+        if (golden_states[idx] != state_mem[idx]) {
             err_counts++;
-            std::cout << "Mismatch in aa at idx = " << idx << std::endl;
+            std::cout << "Mismatch at idx = " << idx << std::endl;
             continue;
-        }
-        if (golden_states[idx].bb != state_mem[idx].bb) {
-            err_counts++;
-            std::cout << "Mismatch in bb at idx = " << idx << std::endl;
-            continue;
-        }
-        if (golden_states[idx].cc != state_mem[idx].cc) {
-            err_counts++;
-            std::cout << "Mismatch in cc at idx = " << idx << std::endl;
-            continue;
-        }
-        for (int idx1 = 0; idx1 < ISAAC_RANDSIZ ; idx1++) {
-            if (golden_states[idx].mm[idx1] != state_mem[idx].mm[idx1]) {
-                err_counts++;
-                std::cout << "Mismatch in mm at idx = " << idx << std::endl;
-                break;
-            }
         }
     }
     if (err_counts == 0) {
